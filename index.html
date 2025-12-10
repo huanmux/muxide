@@ -1,12 +1,576 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MuxIDE</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mux IDE | Kinetic Development Environment</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root {
+            --glass-bg: rgba(10, 10, 12, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --neon-primary: #00f3ff;
+            --neon-secondary: #bc13fe;
+            --neon-error: #ff2a2a;
+            --text-main: #e0e0e0;
+            --grid-line: rgba(255, 255, 255, 0.03);
+            --font-mono: 'Courier New', Courier, monospace;
+            --font-ui: system-ui, -apple-system, sans-serif;
+        }
+
+        * { box-sizing: border-box; user-select: none; }
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background-color: #050505; color: var(--text-main); font-family: var(--font-ui); }
+
+        /* --- BACKGROUND FX --- */
+        #bg-canvas {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -2;
+            filter: contrast(1.2) brightness(0.8);
+        }
+        
+        .aurora-mesh {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1;
+            background: 
+                radial-gradient(at 0% 0%, rgba(188, 19, 254, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(0, 243, 255, 0.15) 0px, transparent 50%);
+            filter: blur(60px); opacity: 0.6;
+            animation: breathe 10s infinite alternate;
+        }
+
+        .dot-matrix {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1;
+            background-image: radial-gradient(var(--grid-line) 1px, transparent 1px);
+            background-size: 20px 20px;
+            mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+        }
+
+        /* --- BOOT SEQUENCE & SCANLINE --- */
+        #boot-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 9999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            font-family: var(--font-mono); color: var(--neon-primary);
+            transition: opacity 0.5s ease;
+        }
+        
+        .holo-spinner {
+            width: 80px; height: 80px; border: 2px solid var(--neon-primary); border-top: 2px solid transparent;
+            border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px;
+            box-shadow: 0 0 15px var(--neon-primary);
+        }
+
+        .scanline-reveal {
+            position: fixed; left: 0; width: 100%; height: 2px; background: var(--neon-primary);
+            box-shadow: 0 0 20px var(--neon-primary); z-index: 9000; opacity: 0; pointer-events: none;
+        }
+
+        /* --- LAYOUT: BENTO GRID --- */
+        #app-container {
+            display: grid;
+            grid-template-columns: 250px 1fr 1fr;
+            grid-template-rows: 60px 1fr 40px;
+            gap: 12px;
+            padding: 12px;
+            height: 100vh;
+            opacity: 0; /* Hidden until boot */
+            transform: scale(0.98);
+        }
+
+        .bento-box {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px) saturate(180%);
+            -webkit-backdrop-filter: blur(16px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex; flex-direction: column;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            position: relative;
+        }
+
+        /* Header */
+        .header { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .logo-area { display: flex; align-items: center; gap: 10px; }
+        .logo-svg { height: 30px; fill: var(--neon-primary); filter: drop-shadow(0 0 5px var(--neon-primary)); }
+        
+        /* Sidebar */
+        .sidebar { grid-column: 1 / 2; grid-row: 2 / 3; padding: 15px; }
+        .project-list { list-style: none; padding: 0; margin-top: 10px; }
+        .project-item {
+            padding: 10px; margin-bottom: 5px; border-radius: 6px; cursor: pointer;
+            transition: all 0.2s; border: 1px solid transparent; font-size: 0.9rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .project-item:hover { background: rgba(255,255,255,0.05); }
+        .project-item.active { background: rgba(0, 243, 255, 0.1); border-color: var(--neon-primary); color: var(--neon-primary); }
+        .btn-new { width: 100%; padding: 10px; background: rgba(255,255,255,0.1); border: none; color: white; border-radius: 6px; cursor: pointer; }
+        .btn-new:hover { background: rgba(255,255,255,0.2); }
+
+        /* Editor Area */
+        .editor-pane { grid-column: 2 / 3; grid-row: 2 / 3; }
+        .tabs { display: flex; background: rgba(0,0,0,0.3); }
+        .tab { padding: 10px 20px; cursor: pointer; color: #888; border-bottom: 2px solid transparent; font-size: 0.85rem; }
+        .tab.active { color: var(--text-main); border-bottom-color: var(--neon-secondary); background: rgba(188, 19, 254, 0.05); }
+        
+        .code-area { 
+            flex: 1; width: 100%; height: 100%; background: transparent; border: none; 
+            color: #d4d4d4; padding: 15px; font-family: var(--font-mono); font-size: 14px; 
+            resize: none; outline: none; line-height: 1.5; white-space: pre; overflow: auto;
+            user-select: text;
+        }
+
+        /* Preview Area */
+        .preview-pane { grid-column: 3 / 4; grid-row: 2 / 3; background: white; }
+        iframe { width: 100%; height: 100%; border: none; }
+
+        /* Footer / Status */
+        .footer { grid-column: 1 / -1; display: flex; align-items: center; padding: 0 15px; font-size: 0.8rem; font-family: var(--font-mono); color: #666; justify-content: space-between; }
+        
+        /* Hacker Text Decoration */
+        .hacker-deco { position: absolute; right: 10px; bottom: 10px; font-size: 10px; opacity: 0.3; pointer-events: none; }
+
+        /* --- BUTTONS & SKEUOMORPHISM --- */
+        .action-btn {
+            background: linear-gradient(145deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+            border: 1px solid rgba(255,255,255,0.1);
+            color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer;
+            font-size: 0.8rem; letter-spacing: 1px; text-transform: uppercase;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2); transition: transform 0.1s, box-shadow 0.1s;
+        }
+        .action-btn:active { transform: translateY(2px); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+        .action-btn.export { border-color: var(--neon-primary); color: var(--neon-primary); }
+
+        /* --- ANIMATIONS & GLITCH --- */
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes breathe { 0% { opacity: 0.4; transform: scale(1); } 100% { opacity: 0.7; transform: scale(1.1); } }
+        
+        .glitch-active {
+            animation: glitch-anim 0.3s cubic-bezier(.25, .46, .45, .94) both infinite;
+            color: var(--neon-error);
+        }
+        @keyframes glitch-anim {
+            0% { transform: translate(0) }
+            20% { transform: translate(-2px, 2px) }
+            40% { transform: translate(-2px, -2px) }
+            60% { transform: translate(2px, 2px) }
+            80% { transform: translate(2px, -2px) }
+            100% { transform: translate(0) }
+        }
+
+        .bump-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; border: 1px solid var(--neon-error); }
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+
+        /* Caution Pulse */
+        .caution-pulse {
+            position: absolute; width: 10px; height: 10px; background: var(--neon-error); border-radius: 50%;
+            top: 10px; right: 10px; box-shadow: 0 0 0 0 rgba(255, 42, 42, 0.7);
+            animation: pulse-red 2s infinite; display: none;
+        }
+        @keyframes pulse-red {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 42, 42, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(255, 42, 42, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 42, 42, 0); }
+        }
+
+        /* Shimmer Loading */
+        .shimmer-line {
+            height: 10px; width: 80%; background: #222; margin: 5px 0; border-radius: 2px;
+            background-image: linear-gradient(to right, #222 0%, #333 20%, #222 40%, #222 100%);
+            background-repeat: no-repeat; background-size: 800px 100%;
+            animation: shimmer 1.5s infinite linear forwards;
+        }
+        @keyframes shimmer { 0% { background-position: -468px 0; } 100% { background-position: 468px 0; } }
+
+    </style>
+</head>
+<body>
+
+    <canvas id="bg-canvas"></canvas>
+    <div class="aurora-mesh"></div>
+    <div class="dot-matrix"></div>
+
+    <div id="boot-screen" onclick="startSystem()">
+        <div class="holo-spinner"></div>
+        <div id="boot-text">MUX KERNEL LOADING...</div>
+        <div style="margin-top:20px; font-size: 12px; color: #666;">[ CLICK TO INITIALIZE ]</div>
+    </div>
+
+    <div id="scanline" class="scanline-reveal"></div>
+
+    <div id="app-container">
+        <header class="bento-box header">
+            <div class="logo-area">
+                <svg class="logo-svg" viewBox="0 0 1124 385" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M468.253 43.25c-6.119 12.696-12.584 26.616-15.208 32.75-1.765 4.125-4.522 10.284-6.127 13.687S444 96.116 444 96.413s-2.25 5.285-5 11.087-5 10.704-5 10.893-2.649 5.915-5.886 12.725c-7.919 16.657-11.132 23.719-18.781 41.279-5.816 13.353-9.16 20.746-16.779 37.103a3707 3707 0 0 0-5.323 11.5 2194 2194 0 0 1-7.97 17c-12.693 26.781-20.416 44.348-20.581 46.81-.153 2.279.202 2.671 2.32 2.566 1.375-.068 3.85-.589 5.5-1.156s4.575-1.558 6.5-2.202 6.2-2.219 9.5-3.5 7.575-2.89 9.5-3.573c1.925-.684 4.4-1.6 5.5-2.035s6.05-2.019 11-3.519c9.765-2.96 46.602-15.033 55.5-18.189 8.523-3.023 20.75-7.109 29-9.691 8.075-2.526 16.105-5.214 36.5-12.214 34.495-11.839 35.567-12.047 44.524-8.614 5 1.916 9.908 3.44 30.476 9.462 3.85 1.127 8.125 2.425 9.5 2.883s7.225 2.258 13 3.997c5.775 1.74 11.625 3.538 13 3.997 5.006 1.668 25.654 7.908 31.5 9.519 3.3.909 8.198 2.509 10.883 3.556 2.686 1.047 5.374 1.903 5.972 1.903 1.233 0 11.721 3.11 22.145 6.565 3.85 1.277 11.5 3.475 17 4.885 5.5 1.411 10.9 2.944 12 3.408 3.726 1.571 8.978 3.279 14.838 4.825 8.849 2.336 9.169 1.238 3.053-10.467-2.793-5.344-6.311-12.191-7.818-15.216s-3.402-6.625-4.211-8-2.162-4.075-3.006-6-4.194-8.991-7.445-15.702S729 209.621 729 209.04c0-.582-2.535-5.441-5.634-10.799-3.098-5.357-6.412-11.541-7.364-13.741-2.29-5.297-8.228-17.798-19.633-41.336-5.153-10.634-9.369-19.59-9.369-19.902 0-.562-23.503-48.563-33.178-67.762-5.73-11.369-6.64-12.702-8.397-12.293-1.081.251-15.877 15.739-21.925 22.948-1.1 1.312-4.671 5.301-7.936 8.865a5487 5487 0 0 0-14.5 15.919c-4.71 5.191-9.497 10.366-10.637 11.5-3.647 3.626-25.776 27.968-30.095 33.104l-4.168 4.957-5.451-6c-2.998-3.3-8.322-9.388-11.832-13.528-3.509-4.14-8.661-10.215-11.448-13.5-2.786-3.285-9.969-12.047-15.961-19.472-5.991-7.425-13.841-16.875-17.444-21s-8.782-10.408-11.511-13.962c-5.365-6.989-10.375-11.962-12.098-12.009-.595-.016-1.569.984-2.166 2.221m157.612 98.104C601.354 168.088 597 172.995 597 173.89c0 .963 6.028 3.092 8.79 3.104.709.003 2.959.83 5 1.838 2.04 1.007 6.41 2.401 9.71 3.098s7.575 1.87 9.5 2.608c1.925.737 5.3 1.891 7.5 2.564s6.7 2.239 10 3.48c6.994 2.63 13.925 4.082 13.378 2.803-.208-.488-6.565-13.438-14.128-28.778-7.562-15.341-13.75-28.278-13.75-28.75 0-1.757-1.649-.487-7.135 5.497m-145.271-.636c-1.048 2.63-4.147 9.507-6.886 15.282-7.56 15.937-15.812 34.259-16.438 36.5-.307 1.1-1.008 2.573-1.557 3.274-1.797 2.294-.071 2.332 5.825.126 3.19-1.194 7.862-2.75 10.381-3.458s10.431-3.307 17.581-5.776 16.262-5.491 20.25-6.716c6.624-2.036 8.503-3.226 6.5-4.117-.413-.183-2.535-2.583-4.716-5.333s-4.206-5.225-4.5-5.5c-.937-.877-12.409-14.32-16.545-19.387a1179 1179 0 0 0-5.989-7.282l-2-2.395z" fill-rule="evenodd"/>
+                </svg>
+                <span style="font-weight: 700; font-size: 1.2rem; letter-spacing: 2px;">IDE</span>
+            </div>
+            <div class="actions">
+                <button class="action-btn" onclick="triggerGlitch()">Simulate Glitch</button>
+                <button class="action-btn export" onclick="exportProject()">Export ZIP</button>
+            </div>
+        </header>
+
+        <aside class="bento-box sidebar">
+            <h4 style="margin: 0 0 10px 0; color: #888;">PROJECTS</h4>
+            <button class="btn-new" onclick="createNewProject()">+ New Project</button>
+            <ul class="project-list" id="project-list">
+                <div class="shimmer-line"></div>
+                <div class="shimmer-line"></div>
+            </ul>
+        </aside>
+
+        <main class="bento-box editor-pane">
+            <div class="caution-pulse" id="error-pulse"></div>
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('html')">index.html</div>
+                <div class="tab" onclick="switchTab('css')">style.css</div>
+                <div class="tab" onclick="switchTab('js')">script.js</div>
+            </div>
+            <textarea id="code-editor" class="code-area" spellcheck="false" oninput="updateCode()"></textarea>
+            <div class="hacker-deco" id="hacker-deco">0x4F8A... MEM_ALLOC</div>
+        </main>
+
+        <div class="bento-box preview-pane">
+            <iframe id="preview-frame"></iframe>
+        </div>
+
+        <footer class="bento-box footer">
+            <div id="status-text">SYSTEM ONLINE // LOCAL STORAGE MOUNTED</div>
+            <div id="audio-status">AUDIO: STANDBY</div>
+        </footer>
+    </div>
+
+    <script>
+        /* --- 1. CORE SYSTEM & BOOT --- */
+        let hasBooted = false;
+        let audioCtx;
+        
+        async function startSystem() {
+            if (hasBooted) return;
+            
+            // Audio Init
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+            playBootSound();
+
+            const bootScreen = document.getElementById('boot-screen');
+            const app = document.getElementById('app-container');
+            const scanline = document.getElementById('scanline');
+
+            // Boot Text Sequence
+            document.getElementById('boot-text').innerText = "MOUNTING FILESYSTEM...";
+            await new Promise(r => setTimeout(r, 600));
+            document.getElementById('boot-text').innerText = "ESTABLISHING NEURAL LINK...";
+            await new Promise(r => setTimeout(r, 600));
+
+            // Animation Reveal
+            bootScreen.style.opacity = '0';
+            setTimeout(() => bootScreen.style.display = 'none', 500);
+
+            // Scanline Effect
+            scanline.style.opacity = '1';
+            scanline.style.transition = 'top 1.5s ease-in-out';
+            scanline.style.top = '0';
+            
+            setTimeout(() => {
+                scanline.style.top = '100%';
+            }, 50);
+
+            setTimeout(() => {
+                scanline.style.opacity = '0';
+                app.style.transition = 'opacity 0.8s, transform 0.8s';
+                app.style.opacity = '1';
+                app.style.transform = 'scale(1)';
+                loadProjects();
+                initBackground();
+                hasBooted = true;
+            }, 1000);
+        }
+
+        /* --- 2. EDITOR LOGIC & STATE --- */
+        let projects = [];
+        let currentProjectId = null;
+        let currentTab = 'html';
+        
+        const editor = document.getElementById('code-editor');
+        const preview = document.getElementById('preview-frame');
+        
+        // Default Template
+        const defaultProject = {
+            id: Date.now(),
+            name: 'Untitled Project',
+            html: '<h1>Hello Mux</h1>\n<p>Edit me!</p>',
+            css: 'body { \n  background: #f0f0f0; \n  font-family: sans-serif; \n  display: flex; \n  justify-content: center; \n  align-items: center; \n  height: 100vh; \n}',
+            js: 'console.log("Mux IDE Active");'
+        };
+
+        function loadProjects() {
+            const stored = localStorage.getItem('mux_projects');
+            if (stored) {
+                projects = JSON.parse(stored);
+            } else {
+                projects = [defaultProject];
+            }
+            renderProjectList();
+            loadProject(projects[0].id);
+        }
+
+        function saveProjects() {
+            localStorage.setItem('mux_projects', JSON.stringify(projects));
+            document.getElementById('status-text').innerText = "SAVED TO PERSISTENT STORAGE // " + new Date().toLocaleTimeString();
+        }
+
+        function renderProjectList() {
+            const list = document.getElementById('project-list');
+            list.innerHTML = '';
+            projects.forEach(p => {
+                const li = document.createElement('li');
+                li.className = `project-item ${p.id === currentProjectId ? 'active' : ''}`;
+                li.innerText = p.name;
+                li.onclick = () => loadProject(p.id);
+                list.appendChild(li);
+            });
+        }
+
+        function createNewProject() {
+            playBlip();
+            const newProj = { ...defaultProject, id: Date.now(), name: `Project ${projects.length + 1}` };
+            projects.push(newProj);
+            saveProjects();
+            loadProject(newProj.id);
+        }
+
+        function loadProject(id) {
+            currentProjectId = id;
+            renderProjectList();
+            const p = projects.find(proj => proj.id === id);
+            editor.value = p[currentTab];
+            updatePreview();
+        }
+
+        function switchTab(type) {
+            playBlip();
+            currentTab = type;
+            // UI Update
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.tab[onclick="switchTab('${type}')"]`).classList.add('active');
+            
+            // Logic Update
+            const p = projects.find(proj => proj.id === currentProjectId);
+            editor.value = p[type];
+        }
+
+        function updateCode() {
+            const p = projects.find(proj => proj.id === currentProjectId);
+            p[currentTab] = editor.value;
+            saveProjects();
+            updatePreview();
+        }
+
+        function updatePreview() {
+            const p = projects.find(proj => proj.id === currentProjectId);
+            const source = `
+                <html>
+                    <head><style>${p.css}</style></head>
+                    <body>
+                        ${p.html}
+                        <script>${p.js}<\/script>
+                    </body>
+                </html>
+            `;
+            preview.contentWindow.document.open();
+            preview.contentWindow.document.write(source);
+            preview.contentWindow.document.close();
+        }
+
+        /* --- 3. EXPORT LOGIC (ZIP) --- */
+        function exportProject() {
+            playBlip();
+            const p = projects.find(proj => proj.id === currentProjectId);
+            const zip = new JSZip();
+            
+            zip.file("index.html", `<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    ${p.html}
+    <script src="script.js"><\/script>
+</body>
+</html>`);
+            zip.file("style.css", p.css);
+            zip.file("script.js", p.js);
+            zip.file("README.txt", `Generated by Mux IDE.
+            
+To deploy:
+1. Drag this folder to Netlify Drop (netlify.com).
+2. Or upload to Vercel/Cloudflare Pages.
+3. Or push to GitHub and use GitHub Pages.`);
+
+            zip.generateAsync({type:"blob"}).then(function(content) {
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(content);
+                link.download = `${p.name.replace(/\s+/g, '_')}.zip`;
+                link.click();
+                
+                // Alert tip
+                alert(`Project Exported!\n\nPro Tip: Upload this .zip content directly to:\n- Netlify\n- Cloudflare Pages\n- Vercel\n- GitHub Pages`);
+            });
+        }
+
+        /* --- 4. AUDIO ENGINE --- */
+        function playBootSound() {
+            if(!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.5);
+            
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.5);
+        }
+
+        function playBlip() {
+            if(!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        /* --- 5. VISUAL FX (Canvas Fluid & Hacker Text) --- */
+        // Hacker Text Randomizer
+        setInterval(() => {
+            const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&";
+            const el = document.getElementById('hacker-deco');
+            let str = "0x";
+            for(let i=0; i<4; i++) str += chars[Math.floor(Math.random() * chars.length)];
+            el.innerText = str + "... MEM_ALLOC // " + Math.floor(Math.random()*100) + "%";
+        }, 150);
+
+        // Glitch Trigger
+        function triggerGlitch() {
+            playBootSound(); // Reuse sound
+            const body = document.body;
+            const editorPane = document.querySelector('.editor-pane');
+            const pulse = document.getElementById('error-pulse');
+            
+            body.classList.add('glitch-active');
+            editorPane.classList.add('bump-shake');
+            pulse.style.display = 'block';
+
+            setTimeout(() => {
+                body.classList.remove('glitch-active');
+                editorPane.classList.remove('bump-shake');
+                pulse.style.display = 'none';
+            }, 600);
+        }
+
+        // Particle Fluid Background (Simplified Navier-Stokes Aesthetic)
+        function initBackground() {
+            const canvas = document.getElementById('bg-canvas');
+            const ctx = canvas.getContext('2d');
+            let particles = [];
+            
+            const resize = () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            };
+            window.addEventListener('resize', resize);
+            resize();
+
+            class Particle {
+                constructor() {
+                    this.reset();
+                }
+                reset() {
+                    this.x = Math.random() * canvas.width;
+                    this.y = Math.random() * canvas.height;
+                    this.vx = (Math.random() - 0.5) * 0.5;
+                    this.vy = (Math.random() - 0.5) * 0.5;
+                    this.size = Math.random() * 2;
+                    this.life = Math.random() * 100;
+                    this.alpha = 0;
+                }
+                update() {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.life--;
+                    if(this.life < 20) this.alpha -= 0.05;
+                    else if (this.alpha < 0.5) this.alpha += 0.01;
+                    
+                    // Mouse interaction
+                    const dx = mouse.x - this.x;
+                    const dy = mouse.y - this.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if(dist < 100) {
+                        this.vx -= dx * 0.001;
+                        this.vy -= dy * 0.001;
+                    }
+
+                    if (this.life <= 0 || this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+                        this.reset();
+                    }
+                }
+                draw() {
+                    ctx.fillStyle = `rgba(0, 243, 255, ${this.alpha})`;
+                    ctx.fillRect(this.x, this.y, this.size, this.size);
+                }
+            }
+
+            for(let i=0; i<150; i++) particles.push(new Particle());
+            
+            let mouse = {x: -1000, y: -1000};
+            window.addEventListener('mousemove', e => {
+                mouse.x = e.clientX;
+                mouse.y = e.clientY;
+            });
+
+            function animate() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                particles.forEach(p => {
+                    p.update();
+                    p.draw();
+                });
+                requestAnimationFrame(animate);
+            }
+            animate();
+        }
+
+        /* --- 6. TAB SUPPORT FOR TEXTAREA --- */
+        editor.addEventListener('keydown', function(e) {
+            if (e.key == 'Tab') {
+                e.preventDefault();
+                var start = this.selectionStart;
+                var end = this.selectionEnd;
+                this.value = this.value.substring(0, start) +
+                    "  " + this.value.substring(end);
+                this.selectionStart = this.selectionEnd = start + 2;
+                updateCode();
+            }
+        });
+
+    </script>
+</body>
 </html>
