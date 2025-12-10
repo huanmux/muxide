@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+@import '@fontsource/geist-sans';
+@import 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap';
+
 /* Custom Scrollbar for demo */
 .scrollbar-hide::-webkit-scrollbar {
     display: none;
@@ -9,4 +12,77 @@
 .scrollbar-hide {
     -ms-overflow-style: none;  /* IE and Edge */
     scrollbar-width: none;  /* Firefox */
+}
+
+/* Glassmorphism */
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Skeuomorphism */
+.skeuo {
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+}
+
+/* Aurora gradients */
+.aurora {
+  background: linear-gradient(to bottom right, #8EC5FC, #E0C3FC);
+}
+
+/* Mesh gradients */
+.mesh {
+  background: radial-gradient(at 0% 0%, hsla(55,100%,50%,0.3), transparent),
+              radial-gradient(at 50% 150%, hsla(180,100%,50%,0.3), transparent),
+              radial-gradient(at 100% 100%, hsla(240,100%,50%,0.3), transparent);
+}
+
+/* Dot matrix backgrounds */
+.dot-matrix {
+  background-image: radial-gradient(circle, rgba(0,0,0,0.1) 1px, transparent 1px);
+  background-size: 10px 10px;
+}
+
+/* Skeletal streaming shimmer */
+.shimmer {
+  background: linear-gradient(to right, #f6f7f8 0%, #edeef1 10%, #f6f7f8 20%, #f6f7f8 100%);
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+
+/* Glitch effects */
+@keyframes glitch {
+  0% { transform: translate(0); }
+  20% { transform: translate(-5px, 5px); }
+  40% { transform: translate(-5px, -5px); }
+  60% { transform: translate(5px, 5px); }
+  80% { transform: translate(5px, -5px); }
+  100% { transform: translate(0); }
+}
+.glitch {
+  animation: glitch 0.5s infinite;
+}
+
+/* CSS blend modes example */
+.blend {
+  mix-blend-mode: multiply;
+}
+
+/* Holographic scifi style */
+.holo {
+  color: #00ffff;
+  text-shadow: 0 0 10px #00ffff;
+}
+
+/* Bento grid example */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
 }
